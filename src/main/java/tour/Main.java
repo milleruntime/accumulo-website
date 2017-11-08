@@ -2,6 +2,7 @@ package tour;
 
 // Classes you will use along the tour
 import java.util.Map;
+import java.util.Random;
 import org.apache.accumulo.core.client.BatchWriter;
 import org.apache.accumulo.core.client.BatchWriterConfig;
 import org.apache.accumulo.core.client.Connector;
@@ -39,47 +40,29 @@ public class Main {
         Connector conn = mac.getConnector("root", "tourguide");
         conn.tableOperations().create("GothamPD");
 
-        // Create a "secretIdentity" authorization & visibility
-        final String secId = "secretIdentity";
-        Authorizations auths = new Authorizations(secId);
-        ColumnVisibility visibility = new ColumnVisibility(secId);
-
-        // Create a user with the "secretIdentity" authorization and grant him read permissions on our table
-        conn.securityOperations().createLocalUser("commissioner", new PasswordToken("gordanrocks"));
-        conn.securityOperations().changeUserAuthorizations("commissioner", auths);
-        conn.securityOperations().grantTablePermission("commissioner", "GothamPD", TablePermission.READ);
-
-        // Create 3 Mutation objects to hold each person of interest.
-        Mutation mutation1 = new Mutation("id0001");
-        Mutation mutation2 = new Mutation("id0002");
-        Mutation mutation3 = new Mutation("id0003");
-
-        // Create key/value pairs for each Mutation, putting them in the appropriate family.
-        mutation1.put("hero","alias", "Batman");
-        mutation1.put("hero","name", visibility,"Bruce Wayne");
-        mutation1.put("hero","wearsCape?", "true");
-        mutation2.put("hero","alias", "Robin");
-        mutation2.put("hero","name", visibility,"Dick Grayson");
-        mutation2.put("hero","wearsCape?", "true");
-        mutation3.put("villain","alias", "Joker");
-        mutation3.put("villain","name", "Unknown");
-        mutation3.put("villain","wearsCape?", "false");
-
-        // Create a BatchWriter to the GothamPD table and add your mutations to it.  Try w/ resources will close for us.
+        //
         try(BatchWriter writer = conn.createBatchWriter("GothamPD", new BatchWriterConfig())) {
-            writer.addMutation(mutation1);
-            writer.addMutation(mutation2);
-            writer.addMutation(mutation3);
+            for(int i = 0; i < 10_000; i++) {
+                Mutation m = new Mutation(String.format("id%04d", i));
+                String cf = String.format("henchmanType%d", (i % 5));
+                m.put(cf, "alias", "henchman" + i);
+                m.put(cf, "yearsOfService", "" + (new Random().nextInt(50)));
+                m.put(cf, "wearsCape?", "false");
+                writer.addMutation(m);
+            }
         }
 
-        // Read and print all rows of the commissioner can see. Pass Scanner proper authorizations
-        Connector commishConn = mac.getConnector("commissioner", "gordanrocks");
-        try(Scanner scan = commishConn.createScanner("GothamPD", auths)) {
+        //
+        try(BatchScanner scan = conn.createBatchScanner("GothamPD", Authorizations.EMPTY, 2) {
+            scan.setRange(new Range("id6999", "id7001"));
             System.out.println("Gotham Police Department Persons of Interest:");
+            Long read = 0L;
+            Long start = System.nanoTime();
             for (Map.Entry<Key, Value> entry : scan) {
                 System.out.println("Key:" + entry.getKey());
                 System.out.println("Value:" + entry.getValue());
             }
+            System.out.println("Range took " + (System.nanoTime() - start)/1000.0 + " to read " + read);
         }
     }
 }
