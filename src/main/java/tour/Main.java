@@ -49,23 +49,22 @@ public class Main {
         conn.securityOperations().changeUserAuthorizations("commissioner", auths);
         conn.securityOperations().grantTablePermission("commissioner", "GothamPD", TablePermission.READ);
 
-        // Create 3 Mutation objects to hold each person of interest.
+        // Create 3 Mutation objects, securing the proper columns.
         Mutation mutation1 = new Mutation("id0001");
-        Mutation mutation2 = new Mutation("id0002");
-        Mutation mutation3 = new Mutation("id0003");
-
-        // Create key/value pairs for each Mutation, putting them in the appropriate family.
         mutation1.put("hero","alias", "Batman");
-        mutation1.put("hero","name", visibility,"Bruce Wayne");
+        mutation1.put("hero","name", visibility, "Bruce Wayne");
         mutation1.put("hero","wearsCape?", "true");
+        Mutation mutation2 = new Mutation("id0002");
         mutation2.put("hero","alias", "Robin");
         mutation2.put("hero","name", visibility,"Dick Grayson");
         mutation2.put("hero","wearsCape?", "true");
+        Mutation mutation3 = new Mutation("id0003");
         mutation3.put("villain","alias", "Joker");
         mutation3.put("villain","name", "Unknown");
         mutation3.put("villain","wearsCape?", "false");
 
-        // Create a BatchWriter to the GothamPD table and add your mutations to it.  Try w/ resources will close for us.
+        // Create a BatchWriter to the GothamPD table and add your mutations to it.
+        // Once the BatchWriter is closed by the try w/ resources, data will be available to scans.
         try(BatchWriter writer = conn.createBatchWriter("GothamPD", new BatchWriterConfig())) {
             writer.addMutation(mutation1);
             writer.addMutation(mutation2);
@@ -77,8 +76,7 @@ public class Main {
         try(Scanner scan = commishConn.createScanner("GothamPD", auths)) {
             System.out.println("Gotham Police Department Persons of Interest:");
             for (Map.Entry<Key, Value> entry : scan) {
-                System.out.println("Key:" + entry.getKey());
-                System.out.println("Value:" + entry.getValue());
+                System.out.printf("Key : %-60s  Value : %s\n", entry.getKey(), entry.getValue());
             }
         }
     }
