@@ -27,6 +27,8 @@ import org.apache.accumulo.minicluster.MiniAccumuloCluster;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.ExecutorService;
+
 import org.apache.hadoop.io.Text;
 
 public class Main {
@@ -44,15 +46,57 @@ public class Main {
         Connector conn = inst.getConnector("root", new PasswordToken("secret"));
 
         //mac.start();
-        exercise(conn);
+        exercise(conn, args);
         //mac.stop();
     }
 
-    private static void exercise(Connector conn) throws Exception{
-        // start writing your code here
-        // Connect to Mini Accumulo as the root user and create a table called "GothamPD".
-        //Connector conn = mac.getConnector("root", "tourguide");
 
+    public static abstract class TRunner implements Runnable {
+        int num;
+
+        public TRunner(int i){
+            this.num = i;
+        }
+    }
+
+    private static void exercise(Connector conn, String[] args) throws Exception{
+        if (args == null || args.length == 0 || args[0].isEmpty()) {
+            throw new Exception("The first argument must be number of threads");
+        }
+        int number = Integer.parseInt(args[0]);
+
+        System.out.println("Creating "+number+" tables over threads");
+        Thread [] makers = new Thread[number];
+        Thread [] testers = new Thread[number];
+        for (int i = 0; i < number; i++) {
+            TRunner tableMaker = new TRunner(i){
+                @Override
+                public void run() {
+                    String name = Thread.currentThread().getName();
+                    try {
+                        conn.tableOperations().create("GothamPD" + num);
+                    } catch (Exception e) {
+                        System.out.println("DUDE error in thread " + name);
+                        e.printStackTrace();
+                    }
+                }
+            };
+            makers[i] = new Thread(tableMaker);
+            TRunner tester = new TRunner(i) {
+                @Override
+                public void run() {
+                    if (!conn.tableOperations().exists("GothamPD-" + num));
+                    System.out.println("MIke the table did not exist!! " + num);
+                }
+            };
+            testers[i] = new Thread(tester);
+        }
+
+        System.out.println("starting all threads!!");
+        for (int i = 0; i < number; i++) {
+            testers[i].start();
+            makers[i].start();
+        }
 
         /* Generate 10,000 rows of henchman data
         conn.tableOperations().create("GothamPD");
@@ -67,7 +111,7 @@ public class Main {
         }*/
 
         // 1. Create a BatchScanner with 5 query threads
-        try(BatchScanner batchScanner = conn.createBatchScanner("GothamPD", Authorizations.EMPTY, 5000)) {
+        /*try(BatchScanner batchScanner = conn.createBatchScanner("GothamPD", Authorizations.EMPTY, 5000)) {
             // 2. Create a collection of 2 sample ranges and set it to the batchScanner
             List ranges = new ArrayList<Range>();
             ranges.add(new Range("id9000", "id9999"));
@@ -91,6 +135,6 @@ public class Main {
             }
             System.out.println("Finished with firstrow=" + firstRow + " lastrow=" + lastRow);
             System.out.println("Out of " + entriesRead + " entries, average years of a henchman: " + totalYears / entriesRead);
-        }
+        }*/
     }
 }
