@@ -13,6 +13,8 @@ import org.apache.accumulo.core.client.Connector;
 import org.apache.accumulo.core.client.Instance;
 import org.apache.accumulo.core.client.Scanner;
 import org.apache.accumulo.core.client.ZooKeeperInstance;
+import org.apache.accumulo.core.client.impl.TableOperationsImpl;
+import org.apache.accumulo.core.client.impl.Tables;
 import org.apache.accumulo.core.client.security.tokens.PasswordToken;
 import org.apache.accumulo.core.data.Column;
 import org.apache.accumulo.core.data.Key;
@@ -27,7 +29,15 @@ import org.apache.accumulo.minicluster.MiniAccumuloCluster;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.apache.hadoop.io.Text;
 
@@ -50,14 +60,7 @@ public class Main {
         //mac.stop();
     }
 
-
-    public static abstract class TRunner implements Runnable {
-        int num;
-
-        public TRunner(int i){
-            this.num = i;
-        }
-    }
+    public static int ALL_GOOD = -1;
 
     private static void exercise(Connector conn, String[] args) throws Exception{
         if (args == null || args.length == 0 || args[0].isEmpty()) {
@@ -66,37 +69,81 @@ public class Main {
         int number = Integer.parseInt(args[0]);
 
         System.out.println("Creating "+number+" tables over threads");
-        Thread [] makers = new Thread[number];
-        Thread [] testers = new Thread[number];
+        FutureTask<Integer> [] makers = new FutureTask[number];
+        FutureTask<Integer> [] testers = new FutureTask[number];
         for (int i = 0; i < number; i++) {
-            TRunner tableMaker = new TRunner(i){
-                @Override
-                public void run() {
-                    String name = Thread.currentThread().getName();
-                    try {
-                        conn.tableOperations().create("GothamPD" + num);
-                    } catch (Exception e) {
-                        System.out.println("DUDE error in thread " + name);
-                        e.printStackTrace();
-                    }
+            final int num = i;
+            FutureTask<Integer> tableMaker = new FutureTask<>(() -> {
+                String name = Thread.currentThread().getName();
+                try {
+                    conn.tableOperations().create("GothamPD" + num);
+                } catch (Exception e) {
+                    System.out.println("DUDE error in thread " + name);
+                    e.printStackTrace();
+                    return num;
                 }
-            };
-            makers[i] = new Thread(tableMaker);
-            TRunner tester = new TRunner(i) {
-                @Override
-                public void run() {
-                    if (!conn.tableOperations().exists("GothamPD-" + num));
-                    System.out.println("MIke the table did not exist!! " + num);
-                }
-            };
-            testers[i] = new Thread(tester);
+                return ALL_GOOD;
+            });
+            makers[i] = tableMaker;
+
+            FutureTask<Integer> tester =  new FutureTask<>(() -> {
+                    if (!conn.tableOperations().exists("GothamPD" + num))
+                        return num;
+                    else
+                        return ALL_GOOD;
+
+            });
+            testers[i] = tester;
         }
 
-        System.out.println("starting all threads!!");
+        System.out.println("starting all maker threads!!");
+        ExecutorService executor = Executors.newFixedThreadPool(number * 2);
+        for (int i = 0; i < number; i++)
+            executor.execute(makers[i]);
+
+        System.out.println("wait a few seconds for tables to get creating");
+        Thread.sleep(5000);
+        System.out.println("starting all tester threads!!");
+        for (int i = 0; i < number; i++)
+            executor.execute(testers[i]);
+
+        int mCount = 0, tCount = 0;
+        StringBuilder builder = new StringBuilder();
         for (int i = 0; i < number; i++) {
-            testers[i].start();
-            makers[i].start();
+            Integer makerResult = makers[i].get();
+            if (makerResult != ALL_GOOD){
+                mCount++;
+            }
+            Integer testerResult = testers[i].get();
+            if (testerResult != ALL_GOOD){
+                builder.append(testerResult).append("-");
+                tCount++;
+            }
         }
+
+        System.out.println("TOTAL number of failed creates = " + mCount);
+        System.out.println("TOTAL number of failed test exists = " + tCount);
+        System.out.println("Fails= " + builder.toString());
+
+        System.out.println("Clearing cache");
+        Tables.clearCache(conn.getInstance());
+
+        Thread.sleep(5000);
+        System.out.println("running all tester threads again");
+        for (int i = 0; i < number; i++)
+            executor.execute(testers[i]);
+
+        tCount = 0;
+        for (int i = 0; i < number; i++) {
+            Integer testerResult = testers[i].get();
+            if (testerResult != ALL_GOOD){
+                tCount++;
+            }
+        }
+
+        System.out.println("TOTAL number of failed test exists = " + tCount);
+        List left = executor.shutdownNow();
+        System.out.println("Shutting down with remaing threads running = " + left.size());
 
         /* Generate 10,000 rows of henchman data
         conn.tableOperations().create("GothamPD");
